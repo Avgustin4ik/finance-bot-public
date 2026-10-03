@@ -20,4 +20,5 @@ export const config = {
   googleServiceAccountKeyFile: required("GOOGLE_SERVICE_ACCOUNT_KEY_FILE"),
   spreadsheetId: required("SPREADSHEET_ID"),
   sheetName: process.env.SHEET_NAME ?? "Transactions",
+  defaultCurrency: process.env.DEFAULT_CURRENCY ?? "VND",
 };

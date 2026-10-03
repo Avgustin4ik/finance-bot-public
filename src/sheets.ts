@@ -12,12 +12,12 @@ const sheets = google.sheets({ version: "v4", auth });
 export async function appendExpenseRow(record: ExpenseRecord, sender: string): Promise<void> {
   await sheets.spreadsheets.values.append({
     spreadsheetId: config.spreadsheetId,
-    range: `${config.sheetName}!A:F`,
+    range: `${config.sheetName}!A:H`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
       values: [
-        [record.date, record.amount, record.currency, record.category, record.description, sender],
+        [record.date, record.type, record.source, record.amount, record.currency, record.category, record.description, sender],
       ],
     },
   });

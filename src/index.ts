@@ -23,7 +23,7 @@ bot.on("message:text", async (ctx) => {
     const record = await parseExpense(text);
     await appendExpenseRow(record, sender);
     await ctx.reply(
-      `Recorded: ${record.amount} ${record.currency} — ${record.category} (${record.description}) on ${record.date}`
+      `Записано: ${record.type}, ${record.amount} ${record.currency} — ${record.category} (${record.description}), ${record.source}, ${record.date}`
     );
   } catch (err) {
     if (err instanceof Error && err.message === "not_a_transaction") {
