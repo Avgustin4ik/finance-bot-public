@@ -17,11 +17,10 @@ bot.on("message:text", async (ctx) => {
   }
 
   const text = ctx.message.text;
-  const sender = ctx.from.username ? `@${ctx.from.username}` : userId;
 
   try {
     const record = await parseExpense(text);
-    await appendExpenseRow(record, sender);
+    await appendExpenseRow(record);
     await ctx.reply(
       `Записано: ${record.type}, ${record.amount} ${record.currency} — ${record.category} (${record.description}), ${record.source}, ${record.date}`
     );

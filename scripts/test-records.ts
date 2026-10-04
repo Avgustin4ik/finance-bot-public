@@ -83,7 +83,7 @@ async function main() {
   for (const msg of messages) {
     try {
       const record = await parseExpense(msg);
-      await appendExpenseRow(record, "test-script");
+      await appendExpenseRow(record);
       const line = `OK ${record.type} ${record.amount} ${record.currency} — ${record.category} (${record.description}) via ${record.source} ${record.date}`;
       results.push({ msg, outcome: line });
       console.log(`[OK]  "${msg}" -> ${line}`);
@@ -102,7 +102,7 @@ async function main() {
   if (endCount > startCount) {
     const verify = await sheetsApi.spreadsheets.values.get({
       spreadsheetId: config.spreadsheetId,
-      range: `${config.sheetName}!A${startCount + 1}:H${endCount}`,
+      range: `${config.sheetName}!A${startCount + 1}:G${endCount}`,
     });
     console.log("\n=== Appended rows (as read back from the sheet) ===");
     for (const row of verify.data.values ?? []) {

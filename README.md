@@ -25,7 +25,7 @@ it parses it with Gemini (free tier) and appends a row to a Google Sheet.
    - Put the spreadsheet ID (the long string in its URL between `/d/` and `/edit`) in `.env`
      as `SPREADSHEET_ID`.
    - Make sure the spreadsheet has a tab named exactly as `SHEET_NAME` in `.env`
-     (default: `Transactions`), with columns: date, amount, currency, category, description, sender.
+     (default: `Transactions`), with columns: date, type, source, amount, currency, category, description.
 
 4. **Allowlist (access control)**
    - Leave `ALLOWED_USER_IDS` empty at first, start the bot, and message it from Telegram

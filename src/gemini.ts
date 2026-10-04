@@ -40,7 +40,7 @@ Reply with strict JSON only, matching this shape:
 {
   "type": "Доход" or "Расход", guessed from context (default "Расход" if unclear),
   "source": one of exactly: ${SOURCES.map((c) => `"${c}"`).join(", ")} "Карта VND" by default,
-  "amount": a positive number (always positive regardless of type),
+  "amount": a positive number (always positive regardless of type), if number less that 1000 and currency is VND multiply x1000,
   "currency": "3-letter code, guessed from context, default ${config.defaultCurrency}",
   "category": one of exactly: ${CATEGORIES.map((c) => `"${c}"`).join(", ")},
   "description": "short human-readable summary of what it was, in Russian",
