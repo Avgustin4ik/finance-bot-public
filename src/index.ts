@@ -17,7 +17,20 @@ function formatRecord(record: ExpenseRecord): string {
 }
 
 function formatBatch(records: ExpenseRecord[]): string {
+  if (records.length === 1) return formatRecord(records[0]);
   return records.map((record, i) => `${i + 1}. ${formatRecord(record)}`).join("\n");
+}
+
+// Stores a batch awaiting confirmation and builds its buttons.
+// Multi-record batches also get "Edit", which splits them into one message per record.
+function addPendingBatch(records: ExpenseRecord[], header: string): InlineKeyboard {
+  const batchId = randomUUID();
+  pendingBatches.set(batchId, { records, header });
+  const keyboard = new InlineKeyboard()
+    .text("✅ Accept", `accept:${batchId}`)
+    .text("❌ Cancel", `cancel:${batchId}`);
+  if (records.length > 1) keyboard.text("✏️ Edit", `edit:${batchId}`);
+  return keyboard;
 }
 
 async function isAuthorized(ctx: Context): Promise<boolean> {
@@ -46,12 +59,8 @@ async function handleText(ctx: Context, text: string, header = ""): Promise<void
       return;
     }
 
-    const batchId = randomUUID();
-    pendingBatches.set(batchId, { records, header });
     await ctx.reply(`${header}Найдено записей: ${records.length}. Записать?\n\n${formatBatch(records)}`, {
-      reply_markup: new InlineKeyboard()
-        .text("✅ Accept", `accept:${batchId}`)
-        .text("❌ Cancel", `cancel:${batchId}`),
+      reply_markup: addPendingBatch(records, header),
     });
   } catch (err) {
     if (err instanceof Error && err.message === "not_a_transaction") {
@@ -91,7 +100,7 @@ bot.on("message:voice", async (ctx) => {
   await handleText(ctx, transcript, `🎤 «${transcript}»\n\n`);
 });
 
-bot.callbackQuery(/^(accept|cancel):(.+)$/, async (ctx) => {
+bot.callbackQuery(/^(accept|cancel|edit):(.+)$/, async (ctx) => {
   if (!(await isAuthorized(ctx))) return;
 
   const [, action, batchId] = ctx.match;
@@ -107,6 +116,24 @@ bot.callbackQuery(/^(accept|cancel):(.+)$/, async (ctx) => {
 
   const { records, header } = batch;
 
+  if (action === "edit") {
+    await ctx.answerCallbackQuery();
+    try {
+      await ctx.deleteMessage();
+    } catch {
+      // Telegram can't delete messages older than 48h — just disable the old buttons.
+      await ctx.editMessageText(`${header}Разделено на отдельные записи ниже.`);
+    }
+    // The transcript (if any) goes on the first record only, to keep the chat readable.
+    for (const [i, record] of records.entries()) {
+      const recordHeader = i === 0 ? header : "";
+      await ctx.reply(`${recordHeader}Запись ${i + 1}/${records.length}. Записать?\n\n${formatRecord(record)}`, {
+        reply_markup: addPendingBatch([record], recordHeader),
+      });
+    }
+    return;
+  }
+
   if (action === "cancel") {
     await ctx.answerCallbackQuery({ text: "Cancelled" });
     await ctx.editMessageText(`${header}Отменено, ничего не записано:\n\n${formatBatch(records)}`);
@@ -116,7 +143,7 @@ bot.callbackQuery(/^(accept|cancel):(.+)$/, async (ctx) => {
   try {
     await appendExpenseRows(records);
     await ctx.answerCallbackQuery({ text: "Saved" });
-    await ctx.editMessageText(`${header}Записано (${records.length}):\n\n${formatBatch(records)}`);
+    await ctx.editMessageText(`${header}Записано${records.length > 1 ? ` (${records.length})` : ""}:\n\n${formatBatch(records)}`);
   } catch (err) {
     console.error("Failed to record batch:", err);
     // Put it back so the user can retry with the same buttons.
