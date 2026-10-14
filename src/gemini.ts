@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, type Part } from "@google/generative-ai";
 import { config } from "./config.js";
 import type { ExpenseRecord, TransactionType } from "./types.js";
 
@@ -56,7 +56,7 @@ Reply with strict JSON only, matching this shape:
 If the message does not describe any financial transaction, reply with exactly: {"error": "not_a_transaction"}`;
 }
 
-async function generateWithRetry(parts: { text: string }[], attempts = 3) {
+async function generateWithRetry(parts: Part[], attempts = 3) {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       return await model.generateContent(parts);
@@ -124,4 +124,31 @@ export async function parseExpenses(text: string): Promise<ExpenseRecord[]> {
   }
 
   return items.map((item) => normalizeRecord(item as Record<string, unknown>, text, today));
+}
+
+const TRANSCRIBE_PROMPT = `Transcribe this voice message verbatim, in the language it is spoken (usually Russian).
+Write numbers as digits and keep words like "к", "тысяч", "млн" as spoken.
+Reply with strict JSON only: {"transcript": "..."}
+If there is no intelligible speech, reply with exactly: {"transcript": ""}`;
+
+// Converts a voice message to text. Throws "no_speech" if nothing intelligible was said.
+export async function transcribeVoice(audio: Buffer, mimeType: string): Promise<string> {
+  const result = await generateWithRetry([
+    { text: TRANSCRIBE_PROMPT },
+    { inlineData: { mimeType, data: audio.toString("base64") } },
+  ]);
+
+  const raw = result.response.text();
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`Gemini returned non-JSON output: ${raw}`);
+  }
+
+  const transcript = typeof parsed.transcript === "string" ? parsed.transcript.trim() : "";
+  if (!transcript) {
+    throw new Error("no_speech");
+  }
+  return transcript;
 }

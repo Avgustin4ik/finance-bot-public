@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import { config } from "./config.js";
-import { parseExpenses } from "./gemini.js";
+import { parseExpenses, transcribeVoice } from "./gemini.js";
 import { appendExpenseRows } from "./sheets.js";
 import type { ExpenseRecord } from "./types.js";
 
@@ -9,7 +9,8 @@ const bot = new Bot(config.telegramBotToken);
 
 // Multi-record messages waiting for the user to press Accept/Cancel.
 // In-memory only: a restart/deploy drops them and the buttons report "expired".
-const pendingBatches = new Map<string, ExpenseRecord[]>();
+// `header` is shown above the result (e.g. the voice transcript), or "".
+const pendingBatches = new Map<string, { records: ExpenseRecord[]; header: string }>();
 
 function formatRecord(record: ExpenseRecord): string {
   return `${record.type}, ${record.amount} ${record.currency} — ${record.category} (${record.description}), ${record.source}, ${record.date}`;
@@ -33,65 +34,93 @@ async function isAuthorized(ctx: Context): Promise<boolean> {
   return false;
 }
 
-bot.on("message:text", async (ctx) => {
-  if (!(await isAuthorized(ctx))) return;
-
-  const text = ctx.message.text;
-
+// Parses `text` and either records it (1 record) or asks for confirmation (2+).
+// `header` is prepended to every reply, e.g. the transcript of a voice message.
+async function handleText(ctx: Context, text: string, header = ""): Promise<void> {
   try {
     const records = await parseExpenses(text);
 
     if (records.length === 1) {
       await appendExpenseRows(records);
-      await ctx.reply(`Записано: ${formatRecord(records[0])}`);
+      await ctx.reply(`${header}Записано: ${formatRecord(records[0])}`);
       return;
     }
 
     const batchId = randomUUID();
-    pendingBatches.set(batchId, records);
-    await ctx.reply(`Найдено записей: ${records.length}. Записать?\n\n${formatBatch(records)}`, {
+    pendingBatches.set(batchId, { records, header });
+    await ctx.reply(`${header}Найдено записей: ${records.length}. Записать?\n\n${formatBatch(records)}`, {
       reply_markup: new InlineKeyboard()
         .text("✅ Accept", `accept:${batchId}`)
         .text("❌ Cancel", `cancel:${batchId}`),
     });
   } catch (err) {
     if (err instanceof Error && err.message === "not_a_transaction") {
-      await ctx.reply("I couldn't find a transaction in that message. Try something like: \"500 groceries\".");
+      await ctx.reply(`${header}I couldn't find a transaction in that message. Try something like: "500 groceries".`);
       return;
     }
     console.error("Failed to process message:", err);
-    await ctx.reply("Something went wrong recording that. Please try again.");
+    await ctx.reply(`${header}Something went wrong recording that. Please try again.`);
   }
+}
+
+bot.on("message:text", async (ctx) => {
+  if (!(await isAuthorized(ctx))) return;
+  await handleText(ctx, ctx.message.text);
+});
+
+bot.on("message:voice", async (ctx) => {
+  if (!(await isAuthorized(ctx))) return;
+
+  let transcript: string;
+  try {
+    const file = await ctx.getFile();
+    const res = await fetch(`https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`);
+    if (!res.ok) throw new Error(`Voice download failed: HTTP ${res.status}`);
+    const audio = Buffer.from(await res.arrayBuffer());
+    transcript = await transcribeVoice(audio, ctx.message.voice.mime_type ?? "audio/ogg");
+  } catch (err) {
+    if (err instanceof Error && err.message === "no_speech") {
+      await ctx.reply("I couldn't make out any speech in that voice message. Please try again.");
+      return;
+    }
+    console.error("Failed to transcribe voice message:", err);
+    await ctx.reply("Something went wrong transcribing that voice message. Please try again.");
+    return;
+  }
+
+  await handleText(ctx, transcript, `🎤 «${transcript}»\n\n`);
 });
 
 bot.callbackQuery(/^(accept|cancel):(.+)$/, async (ctx) => {
   if (!(await isAuthorized(ctx))) return;
 
   const [, action, batchId] = ctx.match;
-  const records = pendingBatches.get(batchId);
+  const batch = pendingBatches.get(batchId);
   // Remove before writing so a double tap can't append the batch twice.
   pendingBatches.delete(batchId);
 
-  if (!records) {
+  if (!batch) {
     await ctx.answerCallbackQuery({ text: "This request has expired. Please send the message again." });
     await ctx.editMessageReplyMarkup();
     return;
   }
 
+  const { records, header } = batch;
+
   if (action === "cancel") {
     await ctx.answerCallbackQuery({ text: "Cancelled" });
-    await ctx.editMessageText(`Отменено, ничего не записано:\n\n${formatBatch(records)}`);
+    await ctx.editMessageText(`${header}Отменено, ничего не записано:\n\n${formatBatch(records)}`);
     return;
   }
 
   try {
     await appendExpenseRows(records);
     await ctx.answerCallbackQuery({ text: "Saved" });
-    await ctx.editMessageText(`Записано (${records.length}):\n\n${formatBatch(records)}`);
+    await ctx.editMessageText(`${header}Записано (${records.length}):\n\n${formatBatch(records)}`);
   } catch (err) {
     console.error("Failed to record batch:", err);
     // Put it back so the user can retry with the same buttons.
-    pendingBatches.set(batchId, records);
+    pendingBatches.set(batchId, batch);
     await ctx.answerCallbackQuery({ text: "Something went wrong recording that. Please try again." });
   }
 });
