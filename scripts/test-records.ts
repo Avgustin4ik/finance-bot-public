@@ -1,7 +1,9 @@
 // Manual smoke test: feeds a batch of sample messages straight through
-// parseExpense + appendExpenseRow (bypassing Telegram), prints what Gemini
-// extracted, verifies it in the sheet, then deletes the test rows so the
-// sheet ends up exactly as it started.
+// parseExpenses + appendExpenseRows (bypassing Telegram), checks that Gemini
+// found the expected number of records per message, verifies them in the
+// sheet, then deletes the test rows so the sheet ends up exactly as it started.
+// The Accept/Cancel confirmation for multi-record messages lives in the
+// Telegram layer and is not exercised here — every parsed batch is written.
 //
 // Run with: npm run test:records
 // Keep the appended rows for manual inspection instead of auto-deleting:
@@ -9,8 +11,8 @@
 
 import { google } from "googleapis";
 import { config } from "../src/config.js";
-import { parseExpense } from "../src/gemini.js";
-import { appendExpenseRow } from "../src/sheets.js";
+import { parseExpenses } from "../src/gemini.js";
+import { appendExpenseRows } from "../src/sheets.js";
 
 const auth = new google.auth.GoogleAuth({
   keyFile: config.googleServiceAccountKeyFile,
@@ -18,30 +20,48 @@ const auth = new google.auth.GoogleAuth({
 });
 const sheetsApi = google.sheets({ version: "v4", auth });
 
-const messages = [
-  "500 продукты молоко и хлеб",
-  "220000 кофе",
-  "140000 кино",
-  "потратил 1200 на такси",
-  "заплатил 3500 за ужин в ресторане",
-  "15000 аптека лекарства",
-  "89 usd подписка netflix",
-  "получил зарплату 150000",
-  "перевод от мамы 5000",
-  "вчера потратил 300 на такси",
-  "сегодня 450 аптека",
-  "20000 аренда квартиры",
-  "2500 бензин",
-  "1800 коммуналка",
-  "подарок на день рождения 3000",
-  "99 eur подписка spotify",
-  "60000 спортзал абонемент",
-  "вернули долг 10000",
-  "привет как дела",
-  "700 продукты",
-  "фриланс доход 45000",
-  "15000 стоматолог",
+// expected = number of records Gemini should extract (0 = not a transaction).
+// Single-record messages (original set) — must keep producing exactly one record.
+const singleMessages = [
+  { msg: "500 продукты молоко и хлеб", expected: 1 },
+  { msg: "220000 кофе", expected: 1 },
+  { msg: "140000 кино", expected: 1 },
+  { msg: "потратил 1200 на такси", expected: 1 },
+  { msg: "заплатил 3500 за ужин в ресторане", expected: 1 },
+  { msg: "15000 аптека лекарства", expected: 1 },
+  { msg: "89 usd подписка netflix", expected: 1 },
+  { msg: "получил зарплату 150000", expected: 1 },
+  { msg: "перевод от мамы 5000", expected: 1 },
+  { msg: "вчера потратил 300 на такси", expected: 1 },
+  { msg: "сегодня 450 аптека", expected: 1 },
+  { msg: "20000 аренда квартиры", expected: 1 },
+  { msg: "2500 бензин", expected: 1 },
+  { msg: "1800 коммуналка", expected: 1 },
+  { msg: "подарок на день рождения 3000", expected: 1 },
+  { msg: "99 eur подписка spotify", expected: 1 },
+  { msg: "60000 спортзал абонемент", expected: 1 },
+  { msg: "вернули долг 10000", expected: 1 },
+  { msg: "привет как дела", expected: 0 },
+  { msg: "700 продукты", expected: 1 },
+  { msg: "фриланс доход 45000", expected: 1 },
+  { msg: "15000 стоматолог", expected: 1 },
 ];
+
+// Multi-record "summary" messages.
+const multiMessages = [
+  { msg: "50k на кофе, 33000 косметический магазин и 500k продукты", expected: 3 },
+  { msg: "50k for coffee, 33000 for cosmetic store and 500k for groceries", expected: 3 },
+  { msg: "такси 80к, обед 150к", expected: 2 },
+  { msg: "вчера: бензин 100000, мойка байка 50000", expected: 2 },
+  { msg: "получил зарплату 150000 и вернули долг 10000", expected: 2 },
+  { msg: "аренда 8 млн, интернет 250к, электричество 900к, вода 120к", expected: 4 },
+  { msg: "кофе 45к наличными, продукты 320к картой", expected: 2 },
+  { msg: "netflix 15 usd, spotify 11 usd", expected: 2 },
+  { msg: "купил в супермаркете молоко, хлеб и яйца за 210к", expected: 1 },
+  { msg: "аптека 120к\nкафе 200к\nгрэб 60к", expected: 3 },
+];
+
+const messages = [...singleMessages, ...multiMessages];
 
 const KEEP_ROWS = process.env.KEEP_TEST_ROWS === "1";
 
@@ -78,19 +98,25 @@ async function main() {
   const startCount = await getRowCount();
   console.log(`Sheet "${config.sheetName}" found (id=${sheetId}). Rows before test: ${startCount}`);
 
-  const results: { msg: string; outcome: string }[] = [];
+  const results: { msg: string; pass: boolean; outcome: string }[] = [];
 
-  for (const msg of messages) {
+  for (const { msg, expected } of messages) {
     try {
-      const record = await parseExpense(msg);
-      await appendExpenseRow(record);
-      const line = `OK ${record.type} ${record.amount} ${record.currency} — ${record.category} (${record.description}) via ${record.source} ${record.date}`;
-      results.push({ msg, outcome: line });
-      console.log(`[OK]  "${msg}" -> ${line}`);
+      const records = await parseExpenses(msg);
+      await appendExpenseRows(records);
+      const pass = records.length === expected;
+      const lines = records.map(
+        (record) =>
+          `${record.type} ${record.amount} ${record.currency} — ${record.category} (${record.description}) via ${record.source} ${record.date}`
+      );
+      const outcome = `${records.length}/${expected} records\n     ${lines.join("\n     ")}`;
+      results.push({ msg, pass, outcome });
+      console.log(`[${pass ? "OK" : "FAIL"}] "${msg}" -> ${outcome}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      results.push({ msg, outcome: `SKIPPED/ERROR: ${message}` });
-      console.log(`[ERR] "${msg}" -> ${message}`);
+      const pass = expected === 0 && message === "not_a_transaction";
+      results.push({ msg, pass, outcome: `0/${expected} records: ${message}` });
+      console.log(`[${pass ? "OK" : "FAIL"}] "${msg}" -> ${message}`);
     }
     // Free-tier Gemini is rate-limited (~15 req/min) — stay well under that.
     await new Promise((r) => setTimeout(r, 4500));
@@ -121,8 +147,12 @@ async function main() {
 
   console.log("\n=== SUMMARY ===");
   for (const r of results) {
-    console.log(`${r.msg}\n  -> ${r.outcome}`);
+    console.log(`[${r.pass ? "OK" : "FAIL"}] ${r.msg}\n  -> ${r.outcome}`);
   }
+
+  const failed = results.filter((r) => !r.pass);
+  console.log(`\n${results.length - failed.length}/${results.length} passed.`);
+  if (failed.length > 0) process.exitCode = 1;
 }
 
 main().catch((err) => {
