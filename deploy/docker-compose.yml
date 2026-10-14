@@ -1,0 +1,18 @@
+# Lives on the VPS at /opt/finance-bot (copied there by the deploy workflow).
+# IMAGE comes from /opt/finance-bot/.env, which the deploy script writes —
+# so a manual `docker compose up -d` on the server runs the last deployed version.
+services:
+  bot:
+    image: ${IMAGE:?IMAGE is not set}
+    restart: unless-stopped
+    env_file: bot.env
+    environment:
+      GOOGLE_SERVICE_ACCOUNT_KEY_FILE: /run/secrets/service-account.json
+    volumes:
+      - ./service-account.json:/run/secrets/service-account.json:ro
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

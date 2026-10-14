@@ -1,0 +1,108 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing image tag to (re)deploy, e.g. sha-1a2b3c4. Leave empty to build and deploy the selected branch."
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Typecheck & build
+    # Skipped for a manual rollback to an existing tag, so a broken main can't block it.
+    if: github.event_name != 'workflow_dispatch' || inputs.tag == ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  image:
+    name: Build & push image
+    needs: check
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.tag == '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to VPS
+    needs: [check, image]
+    # Runs after a fresh image build, or on its own for a manual rollback (image job skipped).
+    if: github.event_name != 'pull_request' && !cancelled() && !failure()
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      SSH_TARGET: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+      SSH_PORT: ${{ secrets.VPS_PORT || '22' }}
+      APP_DIR: /opt/finance-bot
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image
+        run: |
+          TAG="${{ inputs.tag || needs.image.outputs.tag }}"
+          echo "DEPLOY_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:${TAG}" >> "$GITHUB_ENV"
+
+      - name: Configure SSH
+        run: |
+          install -d -m 700 ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Upload deploy files
+        run: scp -P "$SSH_PORT" deploy/docker-compose.yml deploy/deploy.sh "$SSH_TARGET:$APP_DIR/"
+
+      - name: Log VPS into GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | ssh -p "$SSH_PORT" "$SSH_TARGET" \
+            "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+
+      - name: Deploy ${{ env.DEPLOY_IMAGE }}
+        run: ssh -p "$SSH_PORT" "$SSH_TARGET" "$APP_DIR/deploy.sh '$DEPLOY_IMAGE'"
+
+      - name: Log VPS out of GHCR
+        if: always()
+        run: ssh -p "$SSH_PORT" "$SSH_TARGET" "docker logout ghcr.io" || true

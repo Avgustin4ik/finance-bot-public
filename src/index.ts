@@ -38,5 +38,15 @@ bot.catch((err) => {
   console.error("Bot error:", err);
 });
 
-bot.start();
-console.log("Finance bot started.");
+// Stop long polling cleanly on `docker stop` / deploys, so the next instance
+// doesn't hit a 409 conflict on getUpdates.
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    console.log(`Received ${signal}, stopping bot...`);
+    void bot.stop();
+  });
+}
+
+bot.start({
+  onStart: (me) => console.log(`Finance bot started as @${me.username}.`),
+});
