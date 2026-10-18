@@ -21,4 +21,7 @@ export const config = {
   spreadsheetId: required("SPREADSHEET_ID"),
   sheetName: process.env.SHEET_NAME ?? "Transactions",
   defaultCurrency: process.env.DEFAULT_CURRENCY ?? "VND",
+  reportSheetName: process.env.REPORT_SHEET_NAME ?? "Отчет",
+  // Decides which weekday is "today" in /report_week.
+  reportTimezone: process.env.REPORT_TIMEZONE ?? "Asia/Ho_Chi_Minh",
 };

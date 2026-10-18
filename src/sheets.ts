@@ -9,6 +9,17 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
+// Numbers come back raw and dates as serial numbers, so callers don't depend on the sheet's locale formatting.
+export async function readRange(range: string): Promise<unknown[][]> {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: config.spreadsheetId,
+    range,
+    valueRenderOption: "UNFORMATTED_VALUE",
+    dateTimeRenderOption: "SERIAL_NUMBER",
+  });
+  return res.data.values ?? [];
+}
+
 export async function appendExpenseRow(record: ExpenseRecord): Promise<void> {
   await appendExpenseRows([record]);
 }

@@ -50,6 +50,12 @@ Send the bot a plain-text message like:
 
 It replies confirming what it recorded, and appends a row to the sheet.
 
+Send `/report_week` to get the current week (Mon–Sun) as a rich-message bar chart: spend per day
+vs. the daily limit, overspent days, and what's left for the remaining days. It reads rows 6–13
+of the `REPORT_SHEET_NAME` tab (default `Отчет`), columns A–G: day label, date, spend, limit,
+saved, overdraft, status. Row 13 holds the week totals. `REPORT_TIMEZONE` (default
+`Asia/Ho_Chi_Minh`) decides which day counts as "today".
+
 ## Deployment (CI/CD)
 
 Every push to `main` runs **GitHub Actions** (`.github/workflows/ci-cd.yml`):

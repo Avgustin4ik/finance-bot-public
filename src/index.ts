@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import { config } from "./config.js";
 import { parseExpenses, transcribeVoice } from "./gemini.js";
+import { fetchWeekReport, renderWeekReport } from "./report.js";
 import { appendExpenseRows } from "./sheets.js";
 import type { ExpenseRecord } from "./types.js";
 
@@ -71,6 +72,30 @@ async function handleText(ctx: Context, text: string, header = ""): Promise<void
     await ctx.reply(`${header}Something went wrong recording that. Please try again.`);
   }
 }
+
+const HELP_HTML = `<h3>ℹ️ Как пользоваться ботом</h3>
+<p><b>Записать операцию</b> — просто напишите или надиктуйте голосовым сообщением, например: <code>500 продукты</code> или <code>кофе 45к, такси 120к</code>.</p>
+<p>Одна запись сохраняется сразу. Если записей несколько, бот покажет их списком с кнопками:</p>
+<ul><li>✅ <b>Accept</b> — записать все</li><li>❌ <b>Cancel</b> — ничего не записывать</li><li>✏️ <b>Edit</b> — разбить на отдельные сообщения, чтобы подтвердить каждую запись по отдельности</li></ul>
+<h3>Команды</h3>
+<p>/report_week — отчёт за текущую неделю: траты по дням, лимит, остаток и перерасход.</p>
+<p>/help — эта справка.</p>`;
+
+// Registered before "message:text" so the command isn't parsed as a transaction.
+bot.command("report_week", async (ctx) => {
+  if (!(await isAuthorized(ctx))) return;
+  try {
+    await ctx.replyWithRichMessage(renderWeekReport(await fetchWeekReport()));
+  } catch (err) {
+    console.error("Failed to build week report:", err);
+    await ctx.reply("Не удалось построить отчёт за неделю. Попробуйте ещё раз.");
+  }
+});
+
+bot.command("help", async (ctx) => {
+  if (!(await isAuthorized(ctx))) return;
+  await ctx.replyWithRichMessage({ html: HELP_HTML, skip_entity_detection: true });
+});
 
 bot.on("message:text", async (ctx) => {
   if (!(await isAuthorized(ctx))) return;
@@ -166,5 +191,13 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 }
 
 bot.start({
-  onStart: (me) => console.log(`Finance bot started as @${me.username}.`),
+  onStart: (me) => {
+    console.log(`Finance bot started as @${me.username}.`);
+    bot.api
+      .setMyCommands([
+        { command: "report_week", description: "Отчёт за неделю" },
+        { command: "help", description: "Как пользоваться ботом" },
+      ])
+      .catch((err) => console.error("Failed to set bot commands:", err));
+  },
 });
