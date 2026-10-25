@@ -25,19 +25,22 @@ export async function appendExpenseRow(record: ExpenseRecord): Promise<void> {
 }
 
 // Appends all records in one API call, so a batch is written all-or-nothing.
+// The sheet has pre-filled rows below the data with formulas (E "Валюта" from the account, L–S rates and
+// totals). OVERWRITE fills the next of those rows in place — INSERT_ROWS would insert a blank row without
+// them — and null leaves the E formula untouched (the API skips null cells).
 export async function appendExpenseRows(records: ExpenseRecord[]): Promise<void> {
   await sheets.spreadsheets.values.append({
     spreadsheetId: config.spreadsheetId,
     range: `${config.sheetName}!A:G`,
     valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
+    insertDataOption: "OVERWRITE",
     requestBody: {
       values: records.map((record) => [
         record.date,
         record.type,
         record.source,
         record.amount,
-        record.currency,
+        null,
         record.category,
         record.description,
       ]),

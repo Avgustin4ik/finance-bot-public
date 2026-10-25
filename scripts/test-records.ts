@@ -1,7 +1,7 @@
 // Manual smoke test: feeds a batch of sample messages straight through
 // parseExpenses + appendExpenseRows (bypassing Telegram), checks that Gemini
 // found the expected number of records per message, verifies them in the
-// sheet, then deletes the test rows so the sheet ends up exactly as it started.
+// sheet, then clears the test rows so the sheet ends up exactly as it started.
 // The Accept/Cancel confirmation for multi-record messages lives in the
 // Telegram layer and is not exercised here — every parsed batch is written.
 //
@@ -73,30 +73,20 @@ async function getRowCount(): Promise<number> {
   return res.data.values?.length ?? 0;
 }
 
-async function getSheetIdByName(name: string): Promise<number> {
-  const res = await sheetsApi.spreadsheets.get({ spreadsheetId: config.spreadsheetId });
-  const sheet = res.data.sheets?.find((s) => s.properties?.title === name);
-  if (!sheet || sheet.properties?.sheetId == null) {
-    throw new Error(`Sheet tab "${name}" not found`);
-  }
-  return sheet.properties.sheetId;
-}
-
-async function deleteRows(sheetId: number, startIndex: number, endIndex: number): Promise<void> {
-  await sheetsApi.spreadsheets.batchUpdate({
+// The bot fills pre-filled formula rows in place, so clear only the cells it wrote (A–D, F–G) —
+// deleting the rows would also delete their formulas.
+async function clearRows(firstRow: number, lastRow: number): Promise<void> {
+  await sheetsApi.spreadsheets.values.batchClear({
     spreadsheetId: config.spreadsheetId,
     requestBody: {
-      requests: [
-        { deleteDimension: { range: { sheetId, dimension: "ROWS", startIndex, endIndex } } },
-      ],
+      ranges: [`${config.sheetName}!A${firstRow}:D${lastRow}`, `${config.sheetName}!F${firstRow}:G${lastRow}`],
     },
   });
 }
 
 async function main() {
-  const sheetId = await getSheetIdByName(config.sheetName);
   const startCount = await getRowCount();
-  console.log(`Sheet "${config.sheetName}" found (id=${sheetId}). Rows before test: ${startCount}`);
+  console.log(`Sheet "${config.sheetName}": rows before test: ${startCount}`);
 
   const results: { msg: string; pass: boolean; outcome: string }[] = [];
 
@@ -138,8 +128,8 @@ async function main() {
     if (KEEP_ROWS) {
       console.log("\nKEEP_TEST_ROWS=1 set — leaving test rows in the sheet for inspection.");
     } else {
-      await deleteRows(sheetId, startCount, endCount);
-      console.log(`\nDeleted test rows ${startCount + 1}..${endCount}. Sheet restored to original state.`);
+      await clearRows(startCount + 1, endCount);
+      console.log(`\nCleared test rows ${startCount + 1}..${endCount}. Sheet restored to original state.`);
     }
   } else {
     console.log("\nNo rows were appended, nothing to clean up.");

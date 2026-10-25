@@ -5,6 +5,7 @@ import type { ExpenseRecord, TransactionType } from "./types.js";
 const CATEGORIES = [
   "Жильё",
   "Продукты",
+  "Кофе и Напитки",
   "Кафе и рестораны",
   "Транспорт / байк",
   "Связь и интернет",
@@ -26,6 +27,22 @@ const SOURCES = [
 "USDT",
 "Копилка: переезд"
 ] as const;
+const CURRENCIES = [
+  "RUB",
+  "VND",
+  "USDT"
+] as const;
+type Currency = (typeof CURRENCIES)[number];
+// Codes the model may return for a listed currency.
+const CURRENCY_ALIASES: Record<string, Currency> = { USD: "USDT" };
+// Fallback when the model returns a currency that isn't in CURRENCIES: the source's own currency.
+const SOURCE_CURRENCY: Record<(typeof SOURCES)[number], Currency> = {
+  "Карта RUB": "RUB",
+  "Наличные VND": "VND",
+  "Карта VND": "VND",
+  "USDT": "USDT",
+  "Копилка: переезд": "VND",
+};
 
 const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 const model = genAI.getGenerativeModel({
@@ -45,8 +62,8 @@ Reply with strict JSON only, matching this shape:
     {
       "type": "Доход" or "Расход", guessed from context (default "Расход" if unclear),
       "source": one of exactly: ${SOURCES.map((c) => `"${c}"`).join(", ")} "Карта VND" by default,
-      "amount": a positive number (always positive regardless of type), if number less that 1000 and currency is VND multiply x1000, "k" means x1000,
-      "currency": "3-letter code, guessed from context, default ${config.defaultCurrency}",
+      "amount": a positive number (always positive regardless of type), exactly as stated: apply only the multiplier words in the message ("k"/"к"/"тыс"/"тысяч"/"тыщ" = x1000, "млн"/"миллион" = x1000000); "99 тысяч" is 99000, "50k" is 50000, a bare "99" is 99. Do not scale it any other way,
+      "currency": one of exactly: ${CURRENCIES.map((c) => `"${c}"`).join(", ")}, guessed from context ("донги"/"₫" = "VND", "рубли"/"₽" = "RUB", "доллары"/"$" = "USDT"), default "${config.defaultCurrency}". If the message names any other currency, return that currency's own 3-letter code (e.g. "тенге" = "KZT", "евро" = "EUR") and never substitute a listed one,
       "category": one of exactly: ${CATEGORIES.map((c) => `"${c}"`).join(", ")},
       "description": "short human-readable summary of what it was, in Russian",
       "date": "YYYY-MM-DD, resolve relative dates like today/yesterday against today's date"
@@ -77,13 +94,26 @@ function normalizeRecord(parsed: Record<string, unknown>, text: string, today: s
     throw new Error(`Gemini returned an invalid amount: ${JSON.stringify(parsed)}`);
   }
 
+  const recordSource = typeof source === "string" && SOURCES.includes(source as (typeof SOURCES)[number]) ? source : "Карта VND";
+  // Only currencies the sheet knows: a misheard "тенге" (KZT) must not reach it.
+  const code = typeof currency === "string" ? (CURRENCY_ALIASES[currency] ?? currency) : "";
+  const recordCurrency = CURRENCIES.includes(code as Currency)
+    ? (code as Currency)
+    : SOURCE_CURRENCY[recordSource as (typeof SOURCES)[number]];
+  if (recordCurrency !== code) {
+    console.warn(`Gemini returned unsupported currency ${JSON.stringify(currency)}, using ${recordCurrency}`);
+  }
+  // Shorthand: nobody spends under 1000 ₫, so a bare "99" in VND means 99 000. Applied here rather than
+  // in the prompt, so the model only ever applies the multiplier words actually written in the message.
+  const recordAmount = recordCurrency === "VND" && Math.abs(amount) < 1000 ? Math.abs(amount) * 1000 : Math.abs(amount);
+
   const transactionType: TransactionType = type === "Доход" ? "Доход" : "Расход";
 
   return {
     type: transactionType,
-    source: typeof source === "string" && SOURCES.includes(source as (typeof SOURCES)[number]) ? source : "Карта VND",
-    amount: Math.abs(amount),
-    currency: typeof currency === "string" && currency ? currency : config.defaultCurrency,
+    source: recordSource,
+    amount: recordAmount,
+    currency: recordCurrency,
     category: typeof category === "string" && CATEGORIES.includes(category as (typeof CATEGORIES)[number]) ? category : "Прочее",
     description: typeof description === "string" ? description : text,
     date: typeof date === "string" && date ? date : today,
@@ -127,7 +157,9 @@ export async function parseExpenses(text: string): Promise<ExpenseRecord[]> {
 }
 
 const TRANSCRIBE_PROMPT = `Transcribe this voice message verbatim, in the language it is spoken (usually Russian).
-Write numbers as digits and keep words like "к", "тысяч", "млн" as spoken.
+The speaker usually names one of these currencies: донги, рубли, USDT. Drop filler sounds like "эмм", "ээ".
+Write numbers as digits, but keep multiplier words like "к", "тысяч", "тыщ", "млн" as spoken instead of folding them
+into the digits: "девяносто девять тысяч" → "99 тысяч" (never "99000" or "99000 тысяч"), "полтора миллиона" → "1.5 млн".
 Reply with strict JSON only: {"transcript": "..."}
 If there is no intelligible speech, reply with exactly: {"transcript": ""}`;
 
