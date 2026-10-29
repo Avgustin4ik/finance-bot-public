@@ -160,12 +160,22 @@ export function renderWeekReport(report: WeekReport): RichMessage {
   const overspent = report.days.flatMap((d, i) => (d.overdraft > 0 ? [i] : []));
   const overspentTotal = overspent.reduce((sum, i) => sum + report.days[i].overdraft, 0);
 
-  const summary = [
+  const summary: string[] = [];
+  if (today >= 0) {
+    const day = report.days[today];
+    const availableToday = day.limit - day.spend;
+    summary.push(
+      availableToday >= 0
+        ? `<p>💵 <b>Доступно сегодня: ${money(availableToday)} ₫</b> из ${money(day.limit)} ₫</p>`
+        : `<p>🟧 <b>Сегодня перерасход: ${money(-availableToday)} ₫</b> (лимит ${money(day.limit)} ₫)</p>`
+    );
+  }
+  summary.push(
     `<p>Потрачено <b>${money(report.spend)}</b> из ${money(report.limit)} ₫ · ${pct}%</p>`,
     remaining >= 0
       ? `<p>Осталось ${money(remaining)} ₫${perDayLeft > 0 ? ` · ≈ ${money(perDayLeft)} ₫ в день` : ""}</p>`
-      : `<p>🟧 <b>Перерасход недели: ${money(report.overdraft || -remaining)} ₫</b></p>`,
-  ];
+      : `<p>🟧 <b>Перерасход недели: ${money(report.overdraft || -remaining)} ₫</b></p>`
+  );
   if (overspent.length > 0) {
     const days = overspent.map((i) => DAY_NAMES[i]).join(", ");
     summary.push(`<p>🟧 <b>Перерасход: ${days}</b> (+${money(overspentTotal)} ₫)</p>`);
