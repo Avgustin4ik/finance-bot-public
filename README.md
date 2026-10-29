@@ -16,6 +16,10 @@ structured rows into our Google Sheets budget. It can also send back a weekly sp
 > are no longer being added. This repository shows the project and how it was built. It is not meant as
 > a ready-to-deploy product (the categories, currencies and sheet layout are specific to our budget).
 
+| Voice and text records | Weekly report | Help |
+|---|---|---|
+| <img src="docs/screenshots/voice.jpg" width="260" alt="Voice messages with transcripts and the records saved from them"> | <img src="docs/screenshots/report-week.jpg" width="260" alt="/report_week bar chart of spend per day against the daily limit"> | <img src="docs/screenshots/help.jpg" width="260" alt="/help message explaining how to use the bot"> |
+
 ## What it does
 
 - **Text and voice input.** Voice messages are transcribed, and the transcript is shown in the reply so
