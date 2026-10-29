@@ -20,6 +20,10 @@ structured rows into our Google Sheets budget. It can also send back a weekly sp
 |---|---|---|
 | <img src="docs/screenshots/voice.jpg" width="260" alt="Voice messages with transcripts and the records saved from them"> | <img src="docs/screenshots/report-week.jpg" width="260" alt="/report_week bar chart of spend per day against the daily limit"> | <img src="docs/screenshots/help.jpg" width="260" alt="/help message explaining how to use the bot"> |
 
+| Several records: Accept / Cancel / Edit | After *Edit*: one message per record |
+|---|---|
+| <img src="docs/screenshots/confirm.jpg" width="260" alt="Two records found in one message, with Accept, Cancel and Edit buttons"> | <img src="docs/screenshots/edit-split.jpg" width="260" alt="The two records split into separate messages, each with Accept and Cancel"> |
+
 ## What it does
 
 - **Text and voice input.** Voice messages are transcribed, and the transcript is shown in the reply so

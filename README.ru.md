@@ -21,6 +21,10 @@
 |---|---|---|
 | <img src="docs/screenshots/voice.jpg" width="260" alt="Голосовые сообщения с расшифровкой и сохранённые из них записи"> | <img src="docs/screenshots/report-week.jpg" width="260" alt="Диаграмма /report_week: траты по дням против дневного лимита"> | <img src="docs/screenshots/help.jpg" width="260" alt="Справка /help о том, как пользоваться ботом"> |
 
+| Несколько записей: Accept / Cancel / Edit | После *Edit*: каждая запись отдельно |
+|---|---|
+| <img src="docs/screenshots/confirm.jpg" width="260" alt="В одном сообщении найдены две записи, кнопки Accept, Cancel и Edit"> | <img src="docs/screenshots/edit-split.jpg" width="260" alt="Две записи разбиты на отдельные сообщения, у каждой Accept и Cancel"> |
+
 ## Что умеет
 
 - **Текст и голос.** Голосовые сообщения расшифровываются, и расшифровка показывается в ответе, чтобы
