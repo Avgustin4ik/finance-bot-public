@@ -1,135 +1,122 @@
 # Family Finance Bot
 
-Private Telegram bot for two people. Send it a text message describing an expense/income,
-it parses it with Gemini (free tier) and appends a row to a Google Sheet.
+**English** · [Русский](README.ru.md)
 
-**Iteration 1 scope:** text messages only.
+A private Telegram bot that my partner and I used to track family expenses. You send it a text or
+voice message like *"coffee 45k, taxi 120k"*, it works out what you meant with an LLM, and it writes
+structured rows into our Google Sheets budget. It can also send back a weekly spending report as a chart.
 
-## Setup
+> **Status: finished, not maintained.** The bot ran in production for our family. This repository is a
+> showcase of the project and how it was built. It is not meant as a ready-to-deploy product (the
+> categories, currencies and sheet layout are specific to our budget).
 
-1. **Telegram bot token**
-   - Message [@BotFather](https://t.me/BotFather) on Telegram, run `/newbot`, copy the token.
-   - Put it in `.env` as `TELEGRAM_BOT_TOKEN`.
+## What it does
 
-2. **Gemini API key (free tier)**
-   - Get a key at https://aistudio.google.com/apikey.
-   - Put it in `.env` as `GEMINI_API_KEY`.
+- **Text and voice input.** Voice messages are transcribed, and the transcript is shown in the reply so
+  a misheard amount is easy to spot.
+- **Natural language to structured records.** Each record gets a date, a type (income or expense), a
+  payment source (card, cash, USDT, savings), an amount, a currency (RUB / VND / USDT), a category and a
+  description.
+- **Several records per message.** A single record is saved right away. Two or more are shown with
+  **Accept / Cancel / Edit** buttons. *Edit* splits them so each one can be confirmed on its own.
+- **`/report_week`.** The current week from the sheet's report tab as a bar chart: spend per day vs.
+  the daily limit, overspent days, and how much is still available today.
+- **Private.** Only allowlisted Telegram user IDs are served. Anyone else is refused and logged.
 
-3. **Google service account for Sheets**
-   - In [Google Cloud Console](https://console.cloud.google.com/), create a project (or reuse one).
-   - Enable the **Google Sheets API** for it.
-   - Create a **Service Account**, then create a JSON key for it and download it.
-   - Save the JSON file as `service-account.json` in this repo's root (it's gitignored).
-   - Open your spreadsheet, click **Share**, and share it with the service account's email
-     (looks like `xxx@yyy.iam.gserviceaccount.com`) with **Editor** access.
-   - Put the spreadsheet ID (the long string in its URL between `/d/` and `/edit`) in `.env`
-     as `SPREADSHEET_ID`.
-   - Make sure the spreadsheet has a tab named exactly as `SHEET_NAME` in `.env`
-     (default: `Transactions`), with columns: date, type, source, amount, currency, category, description.
+## The brief and its constraints
 
-4. **Allowlist (access control)**
-   - Leave `ALLOWED_USER_IDS` empty at first, start the bot, and message it from Telegram
-     (both you and your partner). The console will log each unauthorized sender's numeric
-     user ID, e.g. `Unauthorized access attempt from user id=123456789 ...`.
-   - Copy both IDs into `.env` as `ALLOWED_USER_IDS=123456789,987654321`, then restart the bot.
+The project started from a short brief, kept as-is in [`goal.md`](goal.md):
 
-5. **Install and run**
-   ```
-   npm install
-   cp .env.example .env   # fill in the values from steps above
-   npm run dev
-   ```
+1. **Telegram as the interface:** text, voice and photos.
+2. **Write into one specific sheet** of an existing personal Google Spreadsheet.
+3. **Private:** only two people may use it.
+4. **No paid AI API budget.** The original idea was "send it to Claude", but there was no API budget.
+   So the bot uses **Google Gemini on the free tier** (`gemini-flash-lite-latest`) for both parsing and
+   voice transcription. Retries with backoff handle the free tier's rate limits.
+5. **Iterative delivery:** every iteration has to be a complete, working product.
 
-## Usage
+## Architecture
 
-Send the bot a plain-text message like:
-
-- `500 groceries milk and eggs`
-- `-2000 salary`
-- `paid 35 for lunch yesterday`
-
-It replies confirming what it recorded, and appends a row to the sheet.
-
-Send `/report_week` to get the current week (Mon–Sun) as a rich-message bar chart: spend per day
-vs. the daily limit, overspent days, and what's left for the remaining days. It reads rows 6–13
-of the `REPORT_SHEET_NAME` tab (default `Отчет`), columns A–G: day label, date, spend, limit,
-saved, overdraft, status. Row 13 holds the week totals. `REPORT_TIMEZONE` (default
-`Asia/Ho_Chi_Minh`) decides which day counts as "today".
-
-## Deployment (CI/CD)
-
-Every push to `main` runs **GitHub Actions** (`.github/workflows/ci-cd.yml`):
-
-1. **check**: `npm ci`, typecheck, build. This also runs on pull requests.
-2. **image**: builds the Docker image and pushes it to GHCR as `sha-<commit>` and `latest`.
-3. **deploy**: SSHes into the VPS and runs `deploy/deploy.sh`. The script pulls the image,
-   restarts the bot and waits 20s. If the bot isn't still running, it **rolls back
-   automatically** to the previous image and the workflow fails.
-
-### Day-to-day workflow
-
-```
-git checkout -b my-feature    # optional, PRs get checked but not deployed
-# ...edit code, test locally with `npm run dev`...
-git commit -am "Add X"
-git push                      # pushing / merging to main deploys
+```mermaid
+flowchart LR
+    U[Telegram user] -->|text / voice| B[grammY bot]
+    B --> A{allowlist}
+    A -->|denied| L[log + refuse]
+    A -->|voice| T[Gemini: transcribe]
+    T --> P
+    A -->|text| P[Gemini: parse to JSON records]
+    P --> N[normalize: currency, category, amount scale]
+    N -->|1 record| S[(Google Sheets)]
+    N -->|2+ records| C[Accept / Cancel / Edit]
+    C --> S
+    B -->|/report_week| R[read report tab] --> S
 ```
 
-**Use a separate dev bot for local testing.** Only one process can poll a bot token at a time,
-so running `npm run dev` with the production token fights with the VPS (409 Conflict).
-Create a second bot in @BotFather and put its token in your local `.env`.
+| File | Responsibility |
+|---|---|
+| [`src/index.ts`](src/index.ts) | Telegram handlers, allowlist, confirmation buttons, `/help` |
+| [`src/gemini.ts`](src/gemini.ts) | Prompting, transcription, validation and normalization of records |
+| [`src/sheets.ts`](src/sheets.ts) | Writing rows through the Google Sheets API (service account) |
+| [`src/report.ts`](src/report.ts) | Reading the weekly report tab and drawing the chart |
+| [`scripts/test-records.ts`](scripts/test-records.ts) | End-to-end check against sample messages, cleans up after itself |
+| [`deploy/`](deploy), [`Dockerfile`](Dockerfile) | Docker image, VPS bootstrap and a deploy script with automatic rollback |
 
-**Rollback:** GitHub → Actions → CI/CD → *Run workflow* → enter an old tag (e.g. `sha-1a2b3c4`,
-listed under the repo's *Packages*). This redeploys that image without rebuilding.
+**Stack:** TypeScript, Node.js 22, [grammY](https://grammy.dev), Google Gemini API, Google Sheets API,
+Docker, GitHub Actions, a small VPS.
 
-**Logs on the VPS:** `cd /opt/finance-bot && docker compose logs -f bot`
+## How it was built
 
-### One-time setup
+I built it together with an AI coding agent ([Claude Code](https://claude.com/claude-code)), one small
+iteration at a time. I set the goals and constraints, tested each version in the real chat, and decided
+what came next. The commit history follows those iterations:
 
-1. **Push this repo to GitHub** (a private repo is fine):
-   ```
-   gh auth login
-   git branch -M main
-   gh repo create finance-bot --private --source . --push
-   ```
+| # | Iteration | What changed |
+|---|---|---|
+| 1 | **Text → sheet** | Minimal working bot: text message → Gemini → one row in the sheet, with an allowlist |
+| 2 | **Richer records** | Income/expense type and payment source; a model that is still supported; retries for rate limits |
+| 3 | **Production** | Docker image, GitHub Actions → GHCR → VPS over SSH, automatic rollback if the bot doesn't stay up |
+| 4 | **Multiple records** (#1) | One message can hold several transactions, confirmed with Accept/Cancel |
+| 5 | **Voice** (#2) | Voice messages are transcribed by Gemini and go through the same pipeline |
+| 6 | **Edit** (#3) | Split a multi-record confirmation into separate messages |
+| 7 | **Reports** (#4, #6) | `/help` and `/report_week` with a weekly bar chart and today's available money |
+| 8 | **Real-world fixes** (#5) | Bugs found in daily use (see below) |
 
-2. **Bootstrap the VPS** (Debian/Ubuntu). This installs Docker, creates a `deploy` user and
-   creates `/opt/finance-bot`:
-   ```
-   ssh root@<VPS_IP> 'bash -s' < deploy/setup-vps.sh
-   ```
+### Problems found in real use
 
-3. **Create a deploy SSH key** (on your machine) and authorize it on the VPS:
-   ```
-   ssh-keygen -t ed25519 -N "" -C finance-bot-ci -f ~/.ssh/finance-bot-ci
-   ssh root@<VPS_IP> 'cat >> /home/deploy/.ssh/authorized_keys' < ~/.ssh/finance-bot-ci.pub
-   ```
+The most interesting bugs only showed up once the bot was in daily use:
 
-4. **Put the bot's secrets on the VPS.** They never go into git or GitHub:
-   ```
-   cp deploy/bot.env.example /tmp/bot.env   # fill in real values
-   scp -i ~/.ssh/finance-bot-ci /tmp/bot.env service-account.json deploy@<VPS_IP>:/opt/finance-bot/
-   ssh -i ~/.ssh/finance-bot-ci deploy@<VPS_IP> 'chmod 600 /opt/finance-bot/{bot.env,service-account.json}'
-   rm /tmp/bot.env
-   ```
+- **"99 thousand" recorded as 99,000,000 ₫.** The transcript sometimes kept the multiplier both as
+  digits and as a word ("99000 тысяч"). The fix was to tell the transcription to keep number and
+  multiplier separate, and to move the "bare number means thousands of dong" shorthand from the prompt
+  into code, so the model never scales amounts by itself.
+- **Expenses in tenge.** "Тысячи эмм донгов" (thousands, um, dong) was heard as "тысячи тенге"
+  (thousands of tenge) and recorded in KZT. The model now picks from a fixed list of currencies, and
+  anything else falls back to the payment source's currency.
+- **Lost spreadsheet formulas.** Appending with `INSERT_ROWS` added rows without the formula columns
+  (exchange rate, sum in $, week, month) and overwrote a formula column. The fix fills the next
+  pre-filled formula row in place and leaves formula cells untouched.
+- **409 Conflict in development.** Only one process can poll a bot token, so local runs used a separate
+  dev bot.
 
-5. **Add GitHub secrets** (repo → Settings → Secrets and variables → Actions):
-   ```
-   gh secret set VPS_HOST --body "<VPS_IP>"
-   gh secret set VPS_USER --body "deploy"
-   gh secret set VPS_SSH_KEY < ~/.ssh/finance-bot-ci
-   ssh-keyscan -H <VPS_IP> | gh secret set VPS_KNOWN_HOSTS
-   # only if SSH isn't on port 22:
-   gh secret set VPS_PORT --body "2222"
-   ```
+### Not done
 
-6. **Stop any local copy of the bot that uses the production token**, then trigger the first
-   deploy: `gh workflow run CI/CD`, or push a commit to `main`.
+Photos of receipts were in the brief but never built. Text and voice covered our real use.
 
-To change a secret later (e.g. add your partner's ID to `ALLOWED_USER_IDS`), edit
-`/opt/finance-bot/bot.env` on the VPS and run `docker compose up -d` in that directory.
+## Running it yourself
 
-## Next iterations
+This was built for one specific spreadsheet, so expect to adapt the categories, currencies and sheet
+layout in `src/gemini.ts` and `src/sheets.ts`.
 
-- Voice messages (transcription before parsing).
-- Photos (receipts) via image understanding.
+1. Create a bot with [@BotFather](https://t.me/BotFather) and get a Gemini key at
+   [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+2. Create a Google Cloud service account with the Sheets API enabled. Save its JSON key and share the
+   spreadsheet with the service account's email as *Editor*.
+3. Create a `.env` with `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` (path
+   to the JSON key), `SPREADSHEET_ID` and `ALLOWED_USER_IDS`. Optional variables are listed in
+   [`deploy/bot.env.example`](deploy/bot.env.example). Leave `ALLOWED_USER_IDS` empty at first. The
+   console logs the ID of each sender it refuses.
+4. Run `npm install` and then `npm run dev`.
+
+For deployment, `deploy/setup-vps.sh` prepares a Debian/Ubuntu VPS and `deploy/deploy.sh` pulls an
+image and rolls back if the bot fails to start. The GitHub Actions deploy pipeline was removed from this
+public copy. Only the typecheck and build workflow remains.
