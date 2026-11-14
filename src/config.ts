@@ -10,6 +10,7 @@ function required(name: string): string {
 
 export const config = {
   telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
+  // Owners: always allowed, and the only ones who can /invite and /users.
   allowedUserIds: new Set(
     (process.env.ALLOWED_USER_IDS ?? "")
       .split(",")
@@ -24,4 +25,6 @@ export const config = {
   reportSheetName: process.env.REPORT_SHEET_NAME ?? "Отчет",
   // Decides which weekday is "today" in /report_week.
   reportTimezone: process.env.REPORT_TIMEZONE ?? "Asia/Ho_Chi_Minh",
+  // Holds access.json (invited users and pending invites). A Docker volume in production.
+  dataDir: process.env.DATA_DIR ?? "data",
 };

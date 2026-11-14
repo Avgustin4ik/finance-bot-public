@@ -14,5 +14,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
+# Owned by node so the named volume mounted here (see docker-compose.yml) starts out writable.
+RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 CMD ["node", "dist/index.js"]

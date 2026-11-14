@@ -20,7 +20,7 @@ interface DayRow {
   overdraft: number;
 }
 
-interface WeekReport {
+export interface WeekReport {
   days: DayRow[];
   spend: number;
   limit: number;
@@ -91,13 +91,13 @@ export async function fetchWeekReport(): Promise<WeekReport> {
 }
 
 // Bar value in thousands, 3–4 chars so the columns stay narrow: 240 · 1,2м
-function barLabel(n: number): string {
+export function barLabel(n: number): string {
   if (n <= 0) return "—";
   const k = Math.round(n / 1000);
   return k < 1000 ? String(k) : `${(n / 1_000_000).toFixed(1).replace(".", ",")}м`;
 }
 
-interface Column {
+export interface Column {
   value: number;
   limit: number;
   future: boolean;
@@ -106,45 +106,58 @@ interface Column {
 // Vertical bar chart drawn in a monospace <pre> block (rich messages have no colors or images):
 // █ spend within the day's limit, ▓ the part over it, ░ recommended spend for days ahead,
 // ┄ the daily limit (only when every day has the same one), ▲ under today.
-function renderChart(columns: Column[], today: number): string {
+// The first line is the unit caption: Telegram strips leading whitespace from a <pre> block, so a
+// first line starting with spaces (a short Monday bar) would shift that whole row to the left.
+export function renderChart(columns: Column[], today: number): string {
   const labels = columns.map((c) => barLabel(c.value));
   const width = Math.max(3, ...labels.map((l) => l.length));
   const step = Math.max(1, ...columns.map((c) => Math.max(c.value, c.limit))) / CHART_ROWS;
-  // Bar heights in half-rows; any spend shows at least half a cell.
-  const heights = columns.map((c) => (c.value > 0 ? Math.max(1, Math.round((c.value / step) * 2)) : 0));
+  // Bar heights in half-rows; any spend shows at least half a cell. Future bars snap to whole rows,
+  // as ░ has no half-cell variant (a half drawn as ░ would look a whole cell tall).
+  const heights = columns.map((c) => {
+    if (c.value <= 0) return 0;
+    return c.future ? Math.max(2, Math.round(c.value / step) * 2) : Math.max(1, Math.round((c.value / step) * 2));
+  });
   const limitRows = columns.map((c) => Math.round(c.limit / step));
   const sharedLimit = new Set(columns.map((c) => c.limit)).size === 1 && columns[0].limit > 0;
   const topRow = Math.max(...heights.map((h) => Math.ceil(h / 2))) + 1; // +1 for the value labels
+  // Bars crossing the line keep their own fill, so the line reads as passing behind them.
+  const limitLine = (row: number): string => {
+    const line = columns.map((c, i) => (heights[i] > row * 2 - 2 ? (c.future ? "░" : "█").repeat(width) : "┄".repeat(width)));
+    return `${line.join("┄")} ${barLabel(columns[0].limit)}`;
+  };
 
   const cell = (i: number, row: number): string => {
     const { future } = columns[i];
     const h = heights[i];
     const over = row > limitRows[i];
     if (h >= row * 2) return (future ? "░" : over ? "▓" : "█").repeat(width);
-    if (h === row * 2 - 1) return (future ? "░" : "▄").repeat(width);
+    if (h === row * 2 - 1) return "▄".repeat(width);
     if (Math.ceil(h / 2) === row - 1) return labels[i].padStart(width);
     return " ".repeat(width);
   };
 
-  const lines: string[] = [];
+  const lines = ["тыс. ₫"];
+  // A limit above every bar (and its label) still gets drawn, on top.
+  if (sharedLimit && limitRows[0] >= topRow) lines.push(limitLine(limitRows[0] + 1));
   for (let row = topRow; row >= 1; row--) {
     lines.push(columns.map((_, i) => cell(i, row)).join(" ").trimEnd());
-    if (sharedLimit && row - 1 === limitRows[0]) {
-      // Bars crossing the line keep their own fill, so the line reads as passing behind them.
-      const line = columns.map((c, i) => (heights[i] > row * 2 - 2 ? (c.future ? "░" : "█").repeat(width) : "┄".repeat(width)));
-      lines.push(`${line.join("┄")} ${barLabel(columns[0].limit)}`);
-    }
+    if (sharedLimit && row - 1 === limitRows[0]) lines.push(limitLine(row));
   }
   lines.push(DAY_NAMES.map((d) => d.padEnd(width)).join(" ").trimEnd());
   if (today >= 0) lines.push(`${" ".repeat((width + 1) * today)}▲`);
   return lines.join("\n");
 }
 
-export function renderWeekReport(report: WeekReport): RichMessage {
-  const today = todayIndex();
-  const daysLeft = DAYS - 1 - today;
+export function renderWeekReport(report: WeekReport, today = todayIndex()): RichMessage {
+  // Includes today.
+  const daysLeft = DAYS - Math.max(today, 0);
   const remaining = report.limit - report.spend;
-  const perDayLeft = daysLeft > 0 && remaining > 0 ? remaining / daysLeft : 0;
+  // Today's unspent limit is taken out first; the rest is split over daysLeft.
+  // An overspent today reserves nothing (the overspend is already out of `remaining`).
+  const todayLeft = today >= 0 ? Math.max(0, report.days[today].limit - report.days[today].spend) : 0;
+  const leftForFuture = remaining - todayLeft;
+  const perDayLeft = daysLeft > 0 && leftForFuture > 0 ? leftForFuture / daysLeft : 0;
 
   const columns = report.days.map((day, i): Column => {
     const future = i > today && day.spend === 0;
@@ -185,7 +198,7 @@ export function renderWeekReport(report: WeekReport): RichMessage {
 
   const html = [
     `<h3>📊 Бюджет · Неделя</h3>`,
-    `<p>${formatRange(report.days[0].date, report.days[DAYS - 1].date)} · ${limitNote} · <i>тыс. ₫</i></p>`,
+    `<p>${formatRange(report.days[0].date, report.days[DAYS - 1].date)} · ${limitNote}</p>`,
     `<pre>${renderChart(columns, today)}</pre>`,
     ...summary,
     `<footer>█ в лимите · ▓ перерасход · ░ рекомендуется · ▲ сегодня</footer>`,

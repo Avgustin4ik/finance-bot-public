@@ -47,3 +47,34 @@ export async function appendExpenseRows(records: ExpenseRecord[]): Promise<void>
     },
   });
 }
+
+// The last data row, as the sheet displays it (A–G: date, type, source, amount, currency, category, description).
+export interface SheetRow {
+  rowNumber: number;
+  values: string[];
+}
+
+// Clears the last row with a date in column A and returns what it held, or null if only the header is left.
+// Like appendExpenseRows, it touches only A–D and F–G: the row's pre-filled formulas (E, L–S) stay in place,
+// so the next append fills this row again.
+export async function deleteLastExpenseRow(): Promise<SheetRow | null> {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: config.spreadsheetId,
+    range: `${config.sheetName}!A:G`,
+  });
+  const rows = res.data.values ?? [];
+  // Formula rows below the data have an empty A, and the API trims trailing empty rows — but not rows that
+  // only have E filled, so walk back to the last row that actually has a date.
+  let index = rows.length - 1;
+  while (index > 0 && !String(rows[index]?.[0] ?? "").trim()) index--;
+  if (index < 1) return null; // Row 1 is the header.
+
+  const rowNumber = index + 1;
+  await sheets.spreadsheets.values.batchClear({
+    spreadsheetId: config.spreadsheetId,
+    requestBody: {
+      ranges: [`${config.sheetName}!A${rowNumber}:D${rowNumber}`, `${config.sheetName}!F${rowNumber}:G${rowNumber}`],
+    },
+  });
+  return { rowNumber, values: Array.from({ length: 7 }, (_, i) => String(rows[index][i] ?? "")) };
+}

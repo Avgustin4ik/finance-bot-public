@@ -12,8 +12,8 @@ A private Telegram bot that my partner and I use to track family expenses. You s
 voice message like *"coffee 45k, taxi 120k"*, it works out what you meant with an LLM, and it writes
 structured rows into our Google Sheets budget. It can also send back a weekly spending report as a chart.
 
-> **Status: in daily use, active development finished.** We still use the bot every day. New features
-> are no longer being added. This repository shows the project and how it was built. It is not meant as
+> **Status: in daily use, still growing slowly.** We use the bot every day, and new features are added
+> now and then when we need them. This repository shows the project and how it was built. It is not meant as
 > a ready-to-deploy product (the categories, currencies and sheet layout are specific to our budget).
 
 | Voice and text records | Weekly report | Help |
@@ -35,7 +35,13 @@ structured rows into our Google Sheets budget. It can also send back a weekly sp
   **Accept / Cancel / Edit** buttons. *Edit* splits them so each one can be confirmed on its own.
 - **`/report_week`.** The current week from the sheet's report tab as a bar chart: spend per day vs.
   the daily limit, overspent days, and how much is still available today.
-- **Private.** Only allowlisted Telegram user IDs are served. Anyone else is refused and logged.
+- **`/delete_last`.** Removes the last record from the sheet and shows what was removed. The row's
+  formulas stay in place.
+- **Private.** Only the allowlisted owners and people they invite with a one-time `/invite` link (valid
+  for 24 hours) are served. Owners see and remove invited users with `/users`. Anyone else is refused
+  and logged.
+- **Release notes.** After a deploy the bot sends every user a silent message (no sound) about what
+  changed, and `/change_log` shows the latest update.
 
 ## The brief and its constraints
 
@@ -64,6 +70,9 @@ flowchart LR
     N -->|2+ records| C[Accept / Cancel / Edit]
     C --> S
     B -->|/report_week| R[read report tab] --> S
+    B -->|/delete_last| S
+    B -->|/invite, /users| AC[(access.json)]
+    A -.-> AC
 ```
 
 | File | Responsibility |
@@ -72,7 +81,10 @@ flowchart LR
 | [`src/gemini.ts`](src/gemini.ts) | Prompting, transcription, validation and normalization of records |
 | [`src/sheets.ts`](src/sheets.ts) | Writing rows through the Google Sheets API (service account) |
 | [`src/report.ts`](src/report.ts) | Reading the weekly report tab and drawing the chart |
+| [`src/access.ts`](src/access.ts) | Invites and invited users, stored as JSON on a Docker volume |
+| [`src/changelog.ts`](src/changelog.ts) | `/change_log` and the silent post-deploy message (entries in `changelog-entries.ts`) |
 | [`scripts/test-records.ts`](scripts/test-records.ts) | End-to-end check against sample messages, cleans up after itself |
+| [`scripts/test-report.ts`](scripts/test-report.ts) | Offline check of the `/report_week` rendering over fixed and random weeks |
 | [`deploy/`](deploy), [`Dockerfile`](Dockerfile) | Docker image, VPS bootstrap and a deploy script with automatic rollback |
 
 **Stack:** TypeScript, Node.js 22, [grammY](https://grammy.dev), Google Gemini API, Google Sheets API,
@@ -94,7 +106,9 @@ real chat, and then told it what to fix or build next. The commit history follow
 | 5 | **Voice** (#2) | Voice messages are transcribed by Gemini and go through the same pipeline |
 | 6 | **Edit** (#3) | Split a multi-record confirmation into separate messages |
 | 7 | **Reports** (#4, #6) | `/help` and `/report_week` with a weekly bar chart and today's available money |
-| 8 | **Real-world fixes** (#5) | Bugs found in daily use (see below) |
+| 8 | **Real-world fixes** (#5, #8) | Bugs found in daily use (see below) |
+| 9 | **Invite-based access** (#7) | `/invite` with a one-time link and `/users` to manage access |
+| 10 | **Undo and release notes** (#9) | `/delete_last`, `/change_log` and a silent update message to everyone after a deploy |
 
 ### Problems found in real use
 
@@ -110,6 +124,9 @@ The most interesting bugs only showed up once the bot was in daily use:
 - **Lost spreadsheet formulas.** Appending with `INSERT_ROWS` added rows without the formula columns
   (exchange rate, sum in $, week, month) and overwrote a formula column. The fix fills the next
   pre-filled formula row in place and leaves formula cells untouched.
+- **Shifted report chart.** Telegram strips leading whitespace from a `<pre>` block, so the chart's top
+  row moved left whenever the tallest bar wasn't on the first day. The block now starts with a
+  "тыс. ₫" caption line, and an offline test (`npm run test:report`) checks the grid alignment.
 - **409 Conflict in development.** Only one process can poll a bot token, so local runs used a separate
   dev bot.
 

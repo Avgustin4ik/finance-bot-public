@@ -10,9 +10,14 @@ services:
       GOOGLE_SERVICE_ACCOUNT_KEY_FILE: /run/secrets/service-account.json
     volumes:
       - ./service-account.json:/run/secrets/service-account.json:ro
+      # Invited users and pending invites (access.json). Survives deploys and restarts.
+      - bot-data:/app/data
     stop_grace_period: 15s
     logging:
       driver: json-file
       options:
         max-size: 10m
         max-file: "3"
+
+volumes:
+  bot-data:
